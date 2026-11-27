@@ -1,40 +1,79 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
-import type { Language } from '../types';
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import type { Language, SarvamLanguageCode } from '../types';
+import { normalizeSarvamLanguageCode } from '../services/sarvamService';
 
 // ============================================================
 // Language Context
-// Global language state with localStorage persistence
+// Automatically updated from Sarvam AI / speech language detection
 // ============================================================
 
 interface LanguageContextValue {
   language: Language;
+  detectedLanguageCode: SarvamLanguageCode;
+  isAutoDetected: boolean;
   setLanguage: (lang: Language) => void;
+  setDetectedLanguage: (code: SarvamLanguageCode | string) => void;
+}
+
+function sarvamToUiLanguage(code: SarvamLanguageCode): Language {
+  if (code === 'kn-IN') return 'kn';
+  if (code === 'hi-IN') return 'hi';
+  return 'en';
+}
+
+function uiToSarvamLanguage(lang: Language): SarvamLanguageCode {
+  if (lang === 'kn') return 'kn-IN';
+  if (lang === 'hi') return 'hi-IN';
+  return 'en-IN';
 }
 
 const LanguageContext = createContext<LanguageContextValue>({
   language: 'en',
+  detectedLanguageCode: 'en-IN',
+  isAutoDetected: false,
   setLanguage: () => {},
+  setDetectedLanguage: () => {},
 });
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguageState] = useState<Language>(() => {
-    const saved = localStorage.getItem('raksha_language');
-    return (saved as Language) ?? 'en';
+  const [detectedLanguageCode, setDetectedLanguageCode] = useState<SarvamLanguageCode>(() => {
+    const saved = localStorage.getItem('raksha_detected_lang_code');
+    return saved ? normalizeSarvamLanguageCode(saved) : 'en-IN';
   });
+  const [isAutoDetected, setIsAutoDetected] = useState<boolean>(false);
 
-  const setLanguage = (lang: Language) => {
-    setLanguageState(lang);
+  const language: Language = sarvamToUiLanguage(detectedLanguageCode);
+
+  const setDetectedLanguage = useCallback((code: SarvamLanguageCode | string) => {
+    const normalized = normalizeSarvamLanguageCode(code);
+    setDetectedLanguageCode(normalized);
+    setIsAutoDetected(true);
+    localStorage.setItem('raksha_detected_lang_code', normalized);
+    localStorage.setItem('raksha_language', sarvamToUiLanguage(normalized));
+  }, []);
+
+  const setLanguage = useCallback((lang: Language) => {
+    const code = uiToSarvamLanguage(lang);
+    setDetectedLanguageCode(code);
+    setIsAutoDetected(false);
     localStorage.setItem('raksha_language', lang);
-    // Update html lang attribute for accessibility
-    document.documentElement.lang = lang === 'en' ? 'en' : lang === 'hi' ? 'hi' : 'kn';
-  };
+    localStorage.setItem('raksha_detected_lang_code', code);
+  }, []);
 
   useEffect(() => {
-    document.documentElement.lang = language === 'en' ? 'en' : language === 'hi' ? 'hi' : 'kn';
-  }, [language]);
+    document.documentElement.lang = detectedLanguageCode.split('-')[0] || 'en';
+  }, [detectedLanguageCode]);
 
   return (
-    <LanguageContext.Provider value={{ language, setLanguage }}>
+    <LanguageContext.Provider
+      value={{
+        language,
+        detectedLanguageCode,
+        isAutoDetected,
+        setLanguage,
+        setDetectedLanguage,
+      }}
+    >
       {children}
     </LanguageContext.Provider>
   );

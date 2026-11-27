@@ -2,7 +2,7 @@ import type { LocationData } from '../types';
 
 // ============================================================
 // Location Service
-// Browser Geolocation API wrapper
+// Browser Geolocation + Nominatim Geocode & Reverse Geocode
 // ============================================================
 
 function requestPosition(options: PositionOptions): Promise<LocationData> {
@@ -52,7 +52,6 @@ export async function getCurrentLocation(): Promise<LocationData> {
     if (msg.includes('permission') || msg.includes('denied') || msg.includes('not supported')) {
       throw err;
     }
-    // Fallback to low-accuracy (Wi-Fi / IP network location) for desktops without GPS
     return await requestPosition({
       enableHighAccuracy: false,
       timeout: 10000,
@@ -90,6 +89,43 @@ export async function geocodeLocation(query: string): Promise<LocationData & { d
   };
 }
 
+/**
+ * Resolves a human-readable place name (area, city) for a hospital when OSM address tags are missing.
+ */
+export async function reverseGeocodePlace(lat: number, lon: number): Promise<string> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=16`;
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return '';
+    const data = (await response.json()) as {
+      address?: {
+        road?: string;
+        suburb?: string;
+        neighbourhood?: string;
+        village?: string;
+        town?: string;
+        city?: string;
+        state_district?: string;
+      };
+      display_name?: string;
+    };
+    const a = data.address;
+    if (a) {
+      const parts = [
+        a.road || a.neighbourhood || a.suburb || a.village,
+        a.town || a.city || a.state_district,
+      ].filter(Boolean);
+      if (parts.length > 0) return parts.join(', ');
+    }
+    return data.display_name ? data.display_name.split(',').slice(0, 3).join(', ') : '';
+  } catch {
+    return '';
+  }
+}
+
 export function buildShareText(
   location: LocationData,
   emergencyCategory: string,
@@ -111,7 +147,6 @@ export async function copyToClipboard(text: string): Promise<void> {
   if (navigator.clipboard) {
     await navigator.clipboard.writeText(text);
   } else {
-    // Fallback for older browsers
     const textarea = document.createElement('textarea');
     textarea.value = text;
     document.body.appendChild(textarea);

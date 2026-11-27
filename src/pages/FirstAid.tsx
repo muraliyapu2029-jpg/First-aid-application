@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight, Phone, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Ambulance, XCircle } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useEmergency } from '../context/EmergencyContext';
 import { useTTS } from '../hooks/useTTS';
 import { FirstAidStep } from '../components/FirstAidStep';
 import { EmergencyCard } from '../components/EmergencyCard';
-import { TTSWarning } from '../components/TTSWarning';
 import { getFirstAidProtocol } from '../services/firstAidService';
+import { AMBULANCE_NUMBER } from '../types';
 import { t } from '../data/translations';
 
 export default function FirstAid() {
-  const { language } = useLanguage();
-  const { detection, currentStepIndex, nextStep, prevStep } = useEmergency();
+  const { language, detectedLanguageCode } = useLanguage();
+  const { detection, currentStepIndex, nextStep, prevStep, setAmbulanceTriggered } = useEmergency();
   const navigate = useNavigate();
-  const { speak, stop, isSpeaking, canSpeak, hasVoiceForCurrentLang, capability } = useTTS(language);
+  const { speak, stop, isSpeaking, canSpeak, hasVoiceForCurrentLang } = useTTS(
+    language,
+    detectedLanguageCode
+  );
   const protocol = useMemo(
     () => (detection ? getFirstAidProtocol(detection.category, language) : null),
     [detection, language]
@@ -25,17 +28,16 @@ export default function FirstAid() {
     if (!detection) navigate('/');
   }, [detection, navigate]);
 
-  // Auto-speak the current step immediately when step or TTS readiness changes
   useEffect(() => {
     if (protocol && canSpeak && hasVoiceForCurrentLang) {
       const step = protocol.steps[currentStepIndex];
-      const key = `${protocol.category}:${currentStepIndex}:${language}`;
+      const key = `${protocol.category}:${currentStepIndex}:${detectedLanguageCode}`;
       if (step && lastSpokenRef.current !== key) {
         lastSpokenRef.current = key;
-        speak(step.instruction);
+        speak(step.instruction, detectedLanguageCode);
       }
     }
-  }, [currentStepIndex, protocol, language, canSpeak, hasVoiceForCurrentLang, speak]);
+  }, [currentStepIndex, protocol, detectedLanguageCode, canSpeak, hasVoiceForCurrentLang, speak]);
 
   useEffect(() => () => stop(), [stop]);
 
@@ -47,37 +49,23 @@ export default function FirstAid() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 flex flex-col px-5 py-6 pb-28">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-5">
         <button
           id="firstaid-back"
-          onClick={() => { stop(); navigate('/emergency'); }}
+          onClick={() => {
+            stop();
+            navigate('/emergency');
+          }}
           aria-label={t('back', language)}
           className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center"
         >
           <ArrowLeft size={20} className="text-gray-300" />
         </button>
         <div className="flex-1 min-w-0">
-          <EmergencyCard
-            category={detection.category}
-            language={language}
-            compact
-          />
+          <EmergencyCard category={detection.category} language={language} compact />
         </div>
       </div>
 
-      {/* TTS Warning */}
-      {capability && (
-        <div className="mb-4">
-          <TTSWarning
-            language={language}
-            hasVoiceForCurrentLang={hasVoiceForCurrentLang}
-            ttsSupported={capability.supported}
-          />
-        </div>
-      )}
-
-      {/* Current step */}
       {currentStep && (
         <div className="mb-5 flex-1">
           <FirstAidStep
@@ -87,81 +75,79 @@ export default function FirstAid() {
             language={language}
             isSpeaking={isSpeaking}
             canSpeak={canSpeak && hasVoiceForCurrentLang}
-            onSpeak={() => speak(currentStep.instruction)}
+            onSpeak={() => speak(currentStep.instruction, detectedLanguageCode)}
             onStop={stop}
           />
         </div>
       )}
 
-      {/* Navigation */}
       <div className="flex gap-3 mb-5">
         <button
           id="firstaid-prev"
-          onClick={() => { stop(); prevStep(); }}
+          onClick={() => {
+            stop();
+            prevStep();
+          }}
           disabled={isFirstStep}
-          className="flex-1 flex items-center justify-center gap-2 bg-white/10 disabled:opacity-30 hover:bg-white/20 text-white font-semibold py-3.5 rounded-2xl text-sm transition-all"
+          className="flex-1 flex items-center justify-center gap-2 bg-white/10 disabled:opacity-30 hover:bg-white/20 text-white font-bold py-4 rounded-2xl text-base"
         >
-          <ChevronLeft size={18} />
+          <ChevronLeft size={20} />
           {t('previous', language)}
         </button>
         {isLastStep ? (
           <button
             id="firstaid-done"
-            onClick={() => navigate('/hospitals')}
-            className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3.5 rounded-2xl text-sm transition-all"
+            onClick={() => {
+              stop();
+              navigate('/hospitals');
+            }}
+            className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-2xl text-base"
           >
             {t('findHospital', language)}
           </button>
         ) : (
           <button
             id="firstaid-next"
-            onClick={() => { stop(); nextStep(); }}
-            className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 rounded-2xl text-sm transition-all"
+            onClick={() => {
+              stop();
+              nextStep();
+            }}
+            className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-2xl text-base"
           >
             {t('next', language)}
-            <ChevronRight size={18} />
+            <ChevronRight size={20} />
           </button>
         )}
       </div>
 
-      {/* Do-Nots — shown after last step */}
       {isLastStep && protocol.doNots.length > 0 && (
-        <div className="bg-red-950/60 border border-red-700/40 rounded-2xl p-4 mb-5">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle size={18} className="text-red-400" />
-            <h3 className="font-bold text-red-300 text-sm uppercase tracking-wide">
-              {t('doNot', language)}
-            </h3>
-          </div>
-          <ul className="space-y-2">
-            {protocol.doNots.map((item, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-red-200">
-                <span className="text-red-500 font-bold flex-shrink-0">✕</span>
-                {item}
-              </li>
-            ))}
-          </ul>
+        <div className="bg-red-950/60 border border-red-700/40 rounded-2xl p-4 mb-5 space-y-2">
+          {protocol.doNots.map((item, i) => (
+            <div key={i} className="flex items-start gap-2 text-sm text-red-200 font-semibold">
+              <XCircle size={17} className="text-red-400 flex-shrink-0 mt-0.5" />
+              <span>{item}</span>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* When to call doctor */}
-      {isLastStep && (
-        <div className="bg-blue-950/50 border border-blue-800/40 rounded-2xl p-4 mb-5">
-          <h3 className="font-bold text-blue-300 text-sm mb-2">{t('whenToCallDoctor', language)}</h3>
-          <p className="text-blue-200 text-sm leading-relaxed">{protocol.whenToCallDoctor}</p>
+      {/* Always-visible Ambulance 108 Bar */}
+      <div className="fixed bottom-0 left-0 right-0 p-4 bg-gray-950/95 border-t border-white/10 backdrop-blur-sm z-50">
+        <div className="max-w-md mx-auto">
+          <button
+            id="firstaid-call-ambulance"
+            onClick={() => {
+              stop();
+              setAmbulanceTriggered(true);
+              window.location.href = `tel:${AMBULANCE_NUMBER}`;
+              navigate('/hospitals?ambulance=1');
+            }}
+            className="flex items-center justify-center gap-3 bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-2xl text-lg w-full shadow-lg"
+          >
+            <Ambulance size={24} />
+            <span>Ambulance — {AMBULANCE_NUMBER}</span>
+          </button>
         </div>
-      )}
-
-      {/* Always-visible emergency call */}
-      <div className="fixed bottom-0 left-0 right-0 p-4 bg-gray-950/95 border-t border-white/10 backdrop-blur-sm">
-        <a
-          href="tel:112"
-          id="firstaid-call-112"
-          className="flex items-center justify-center gap-3 bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-2xl text-lg transition-colors w-full shadow-lg"
-        >
-          <Phone size={22} />
-          {t('callEmergency', language)} — 112
-        </a>
       </div>
     </div>
   );

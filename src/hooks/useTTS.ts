@@ -1,10 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
-import type { Language, TTSCapability } from '../types';
+import type { Language, SarvamLanguageCode, TTSCapability } from '../types';
 import { speechSynthesisService } from '../services/speechSynthesis';
+import { checkSarvamAvailability, isSarvamLikelyConfigured } from '../services/sarvamService';
 
 // ============================================================
 // useTTS Hook
-// Text-to-Speech with capability detection and Kannada warning
+// Uses Sarvam Bulbul v3 TTS when available (all 11 Indian languages),
+// falling back to browser SpeechSynthesis API
 // ============================================================
 
 export interface TTSState {
@@ -12,42 +14,57 @@ export interface TTSState {
   capability: TTSCapability | null;
   isLoading: boolean;
   showKannadaWarning: boolean;
+  sarvamReady: boolean;
 }
 
-export function useTTS(language: Language) {
+export function useTTS(language: Language, detectedLanguageCode?: SarvamLanguageCode) {
   const cached = speechSynthesisService.getCachedCapability();
   const [state, setState] = useState<TTSState>({
     isSpeaking: false,
     capability: cached,
     isLoading: !cached,
-    showKannadaWarning: cached ? language === 'kn' && !cached.hasKannada : false,
+    showKannadaWarning: false,
+    sarvamReady: isSarvamLikelyConfigured(),
   });
 
   useEffect(() => {
-    speechSynthesisService.detectCapability().then((cap) => {
-      const showKannadaWarning = language === 'kn' && !cap.hasKannada;
+    let active = true;
+    Promise.all([
+      speechSynthesisService.detectCapability(),
+      checkSarvamAvailability(),
+    ]).then(([cap, sarvamReady]) => {
+      if (!active) return;
+      const showKannadaWarning = !sarvamReady && language === 'kn' && !cap.hasKannada;
       setState(prev => ({
         ...prev,
         capability: cap,
         isLoading: false,
         showKannadaWarning,
+        sarvamReady,
       }));
     });
+    return () => { active = false; };
   }, [language]);
 
   const speak = useCallback(
-    (text: string, overrideLang?: Language) => {
-      const targetLang = overrideLang ?? language;
+    (text: string, overrideLang?: Language | SarvamLanguageCode, onFinished?: () => void) => {
+      const targetLang = overrideLang ?? detectedLanguageCode ?? language;
       setState(prev => ({ ...prev, isSpeaking: true }));
 
-      speechSynthesisService.speak(
+      void speechSynthesisService.speak(
         text,
         targetLang,
-        () => setState(prev => ({ ...prev, isSpeaking: false })),
-        () => setState(prev => ({ ...prev, isSpeaking: false }))
+        () => {
+          setState(prev => ({ ...prev, isSpeaking: false }));
+          onFinished?.();
+        },
+        () => {
+          setState(prev => ({ ...prev, isSpeaking: false }));
+          onFinished?.();
+        }
       );
     },
-    [language]
+    [language, detectedLanguageCode]
   );
 
   const stop = useCallback(() => {
@@ -55,8 +72,9 @@ export function useTTS(language: Language) {
     setState(prev => ({ ...prev, isSpeaking: false }));
   }, []);
 
-  const canSpeak = state.capability?.supported ?? false;
-  const hasVoiceForCurrentLang = speechSynthesisService.hasVoiceForLanguage(language);
+  const canSpeak = state.sarvamReady || (state.capability?.supported ?? false);
+  const hasVoiceForCurrentLang =
+    state.sarvamReady || speechSynthesisService.hasVoiceForLanguage(language);
 
   return { ...state, speak, stop, canSpeak, hasVoiceForCurrentLang };
 }

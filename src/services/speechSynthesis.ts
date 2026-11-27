@@ -1,8 +1,10 @@
-import type { Language, TTSCapability } from '../types';
+import type { Language, SarvamLanguageCode, TTSCapability } from '../types';
+import { speakWithSarvamTTS, stopSarvamAudio } from './sarvamService';
 
 // ============================================================
 // Speech Synthesis (Text-to-Speech) Service
-// Wraps SpeechSynthesis API with per-language capability detection
+// Primary: Sarvam Bulbul v3 TTS (supports 11 Indian languages + English)
+// Fallback: Browser Web Speech Synthesis API
 // ============================================================
 
 const LANG_CODES: Record<Language, string[]> = {
@@ -11,8 +13,16 @@ const LANG_CODES: Record<Language, string[]> = {
   en: ['en-IN', 'en-US', 'en-GB', 'en'],
 };
 
+export function toSarvamLangCode(lang: Language | SarvamLanguageCode): SarvamLanguageCode {
+  if (lang.includes('-')) return lang as SarvamLanguageCode;
+  if (lang === 'kn') return 'kn-IN';
+  if (lang === 'hi') return 'hi-IN';
+  return 'en-IN';
+}
+
 class SpeechSynthesisService {
   private capability: TTSCapability | null = null;
+  private speakingSarvam = false;
 
   isSupported(): boolean {
     return 'speechSynthesis' in window;
@@ -29,7 +39,6 @@ class SpeechSynthesisService {
       };
     }
 
-    // Voices may not load immediately — wait for them
     await this.waitForVoices();
 
     const voices = window.speechSynthesis.getVoices();
@@ -68,8 +77,7 @@ class SpeechSynthesisService {
         resolve();
       };
       window.speechSynthesis.addEventListener('voiceschanged', handler);
-      // Fallback timeout
-      setTimeout(resolve, 2000);
+      setTimeout(resolve, 1500);
     });
   }
 
@@ -84,53 +92,68 @@ class SpeechSynthesisService {
     return null;
   }
 
-  speak(
+  async speak(
     text: string,
-    language: Language,
+    language: Language | SarvamLanguageCode,
     onEnd?: () => void,
     onError?: (err: string) => void
-  ): void {
+  ): Promise<void> {
+    this.stop();
+
+    const sarvamCode = toSarvamLangCode(language);
+    this.speakingSarvam = true;
+    const playedSarvam = await speakWithSarvamTTS(
+      text,
+      sarvamCode,
+      () => {
+        this.speakingSarvam = false;
+        onEnd?.();
+      },
+      () => {
+        this.speakingSarvam = false;
+      }
+    );
+
+    if (playedSarvam) return;
+    this.speakingSarvam = false;
+
+    // Fallback to browser SpeechSynthesis
     if (!this.isSupported()) {
       onError?.('Text-to-speech is not supported on this device.');
       return;
     }
 
-    this.stop();
-
+    const uiLang: Language = sarvamCode === 'kn-IN' ? 'kn' : sarvamCode === 'hi-IN' ? 'hi' : 'en';
     const utterance = new SpeechSynthesisUtterance(text);
-    const voice = this.getBestVoice(language);
+    const voice = this.getBestVoice(uiLang);
 
     if (voice) {
       utterance.voice = voice;
       utterance.lang = voice.lang;
     } else {
-      // Use language code without a matching voice — may fall back to default
-      utterance.lang = LANG_CODES[language][0];
+      utterance.lang = sarvamCode;
     }
 
-    utterance.rate = 0.9;
+    utterance.rate = 0.92;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
 
-    utterance.onend = () => {
-      onEnd?.();
-    };
-
-    utterance.onerror = (e) => {
-      onError?.(`Speech synthesis error: ${e.error}`);
-    };
+    utterance.onend = () => onEnd?.();
+    utterance.onerror = (e) => onError?.(`Speech synthesis error: ${e.error}`);
 
     window.speechSynthesis.speak(utterance);
   }
 
   stop(): void {
+    this.speakingSarvam = false;
+    stopSarvamAudio();
     if (this.isSupported()) {
       window.speechSynthesis.cancel();
     }
   }
 
   isSpeaking(): boolean {
-    return this.isSupported() && window.speechSynthesis.speaking;
+    return this.speakingSarvam || (this.isSupported() && window.speechSynthesis.speaking);
   }
 
   hasVoiceForLanguage(language: Language): boolean {

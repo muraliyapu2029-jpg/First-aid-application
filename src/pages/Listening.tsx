@@ -1,175 +1,458 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X } from 'lucide-react';
+import {
+  PhoneOff,
+  Mic,
+  Volume2,
+  Ambulance,
+  MapPin,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Square,
+} from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useEmergency } from '../context/EmergencyContext';
-import { useVoiceInput } from '../hooks/useVoiceInput';
+import { useVoiceInput, type VoiceInputResult } from '../hooks/useVoiceInput';
+import { useTTS } from '../hooks/useTTS';
 import { useOfflineStatus } from '../hooks/useOfflineStatus';
-import { detectEmergency } from '../services/emergencyDetection';
+import {
+  detectEmergency,
+  isAmbulanceRequested,
+  isHospitalRequested,
+} from '../services/emergencyDetection';
+import { getFirstAidProtocol, getEmergencyIcon } from '../services/firstAidService';
+import { askSarvamEmergencyDoctor, checkSarvamAvailability } from '../services/sarvamService';
 import { isAIEnabled } from '../services/aiService';
-import { t } from '../data/translations';
+import {
+  AMBULANCE_NUMBER,
+  EmergencyCategory,
+  SARVAM_LANGUAGE_NAMES,
+  type CallTurn,
+  type SarvamLanguageCode,
+} from '../types';
 
-const VISUALIZER_BARS = [
-  { height: 42, duration: 0.72 },
-  { height: 78, duration: 0.95 },
-  { height: 55, duration: 0.68 },
-  { height: 92, duration: 1.12 },
-  { height: 64, duration: 0.84 },
-  { height: 85, duration: 1.05 },
-  { height: 48, duration: 0.76 },
-  { height: 96, duration: 1.18 },
-  { height: 70, duration: 0.88 },
-  { height: 58, duration: 0.74 },
-  { height: 82, duration: 0.98 },
-  { height: 45, duration: 0.66 },
-];
+type CallPhase = 'listening' | 'thinking' | 'speaking' | 'waiting';
+
+const VISUALIZER_BARS = [42, 78, 55, 92, 64, 85, 48, 96, 70, 58, 82, 45];
 
 export default function Listening() {
-  const { language } = useLanguage();
-  const { setDetection } = useEmergency();
+  const { language, detectedLanguageCode, setDetectedLanguage } = useLanguage();
+  const {
+    detection,
+    callHistory,
+    activeGuidelines,
+    setDetection,
+    addCallTurn,
+    setAmbulanceTriggered,
+    setActiveGuidelines,
+  } = useEmergency();
   const { isOffline } = useOfflineStatus();
   const navigate = useNavigate();
 
-  const { isListening, transcript, interimTranscript, error, isSupported, start, stop } =
-    useVoiceInput(language);
+  const {
+    isListening,
+    isTranscribing,
+    interimTranscript,
+    error: voiceError,
+    start,
+    stop,
+    cancel,
+  } = useVoiceInput(language);
 
-  const handleTranscriptReady = useCallback(
-    async (text: string) => {
-      const result = await detectEmergency(text, isAIEnabled() && !isOffline);
-      setDetection(result);
-      navigate('/emergency');
-    },
-    [isOffline, setDetection, navigate]
-  );
+  const { speak, stop: stopSpeaking, isSpeaking } = useTTS(language, detectedLanguageCode);
 
-  // Start listening as soon as page mounts
+  const [phase, setPhase] = useState<CallPhase>('listening');
+  const [callSeconds, setCallSeconds] = useState(0);
+  const [activeLangCode, setActiveLangCode] = useState<SarvamLanguageCode>(detectedLanguageCode);
+  const [lastSpokenReply, setLastSpokenReply] = useState('');
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const historyRef = useRef<CallTurn[]>(callHistory);
   useEffect(() => {
-    if (isSupported) {
-      start(() => {
-        // On recognition end
-        if (transcript) {
-          handleTranscriptReady(transcript);
-        }
-      });
-    }
-    return () => { stop(); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    historyRef.current = callHistory;
+  }, [callHistory]);
 
-  // When a final transcript arrives, process it
+  // Call timer
   useEffect(() => {
-    if (transcript && !isListening) {
-      handleTranscriptReady(transcript);
-    }
-  }, [transcript, isListening, handleTranscriptReady]);
+    const timer = window.setInterval(() => {
+      setCallSeconds(s => s + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
-  const handleCancel = () => {
-    stop();
-    navigate('/');
+  const formatDuration = (sec: number) => {
+    const m = Math.floor(sec / 60).toString().padStart(2, '0');
+    const s = (sec % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   };
 
+  const triggerAmbulanceFlow = useCallback(
+    (spokenConfirmation?: string, langCode?: SarvamLanguageCode) => {
+      setAmbulanceTriggered(true);
+      if (spokenConfirmation) {
+        speak(spokenConfirmation, langCode ?? activeLangCode);
+      }
+      window.location.href = `tel:${AMBULANCE_NUMBER}`;
+      navigate('/hospitals?ambulance=1');
+    },
+    [activeLangCode, navigate, setAmbulanceTriggered, speak]
+  );
+
+  const handleVoiceResult = useCallback(
+    async ({ transcript, languageCode }: VoiceInputResult) => {
+      setPhase('thinking');
+      setStatusError(null);
+      setActiveLangCode(languageCode);
+      setDetectedLanguage(languageCode);
+
+      const userTurn: CallTurn = {
+        role: 'user',
+        text: transcript,
+        languageCode,
+      };
+      addCallTurn(userTurn);
+      const updatedHistory = [...historyRef.current, userTurn];
+
+      // Immediate ambulance check
+      if (isAmbulanceRequested(transcript)) {
+        const confirmMsg =
+          languageCode === 'kn-IN'
+            ? `ಆಂಬ್ಯುಲೆನ್ಸ್ ${AMBULANCE_NUMBER} ಕ್ಕೆ ಕರೆ ಮಾಡುತ್ತಿದ್ದೇನೆ ಮತ್ತು ಹತ್ತಿರದ ಆಸ್ಪತ್ರೆಯನ್ನು ಹುಡುಕುತ್ತಿದ್ದೇನೆ.`
+            : languageCode === 'hi-IN'
+              ? `एम्बुलेंस ${AMBULANCE_NUMBER} को कॉल कर रहे हैं और सबसे नजदीकी अस्पताल खोज रहे हैं।`
+              : `Calling ambulance ${AMBULANCE_NUMBER} and finding the nearest hospital now.`;
+        triggerAmbulanceFlow(confirmMsg, languageCode);
+        return;
+      }
+
+      // Use Sarvam AI conversational doctor when online & configured
+      if (!isOffline && (await checkSarvamAvailability())) {
+        try {
+          const ai = await askSarvamEmergencyDoctor({
+            transcript,
+            languageCode,
+            history: updatedHistory,
+          });
+
+          setDetection({
+            category: ai.category,
+            confidence: 0.95,
+            rawText: transcript,
+            source: 'sarvam-ai',
+            detectedLanguageCode: languageCode,
+            arrangeAmbulance: ai.arrangeAmbulance,
+            findHospital: ai.findHospital,
+            aiGuidance: ai,
+          });
+          setActiveGuidelines({
+            title: ai.title,
+            guidelines: ai.guidelines,
+            doNots: ai.doNots,
+          });
+          addCallTurn({
+            role: 'assistant',
+            text: ai.voiceReply,
+            languageCode,
+            guidelines: ai.guidelines,
+            doNots: ai.doNots,
+          });
+
+          if (ai.arrangeAmbulance) {
+            triggerAmbulanceFlow(ai.voiceReply, languageCode);
+            return;
+          }
+
+          if (ai.findHospital && ai.category === EmergencyCategory.UNKNOWN) {
+            speak(ai.voiceReply, languageCode);
+            navigate('/hospitals');
+            return;
+          }
+
+          setLastSpokenReply(ai.voiceReply);
+          setPhase('speaking');
+          speak(ai.voiceReply, languageCode, () => {
+            setPhase('waiting');
+          });
+          return;
+        } catch {
+          // Fall back to local WHO guidelines below
+        }
+      }
+
+      // Offline / No-Sarvam-Key fallback using WHO local guidelines
+      if (isHospitalRequested(transcript)) {
+        navigate('/hospitals');
+        return;
+      }
+
+      const fallbackResult = await detectEmergency(
+        transcript,
+        isAIEnabled() && !isOffline,
+        languageCode
+      );
+      setDetection(fallbackResult);
+
+      const uiLang = languageCode === 'kn-IN' ? 'kn' : languageCode === 'hi-IN' ? 'hi' : 'en';
+      const proto = getFirstAidProtocol(fallbackResult.category, uiLang);
+      const shortSteps = proto.steps.slice(0, 4).map(s => s.instruction);
+      const shortDoNots = proto.doNots.slice(0, 3);
+
+      setActiveGuidelines({
+        title: proto.immediateAction,
+        guidelines: shortSteps,
+        doNots: shortDoNots,
+      });
+
+      const voiceText = [proto.immediateAction, ...shortSteps.slice(0, 2)].join('. ');
+      setLastSpokenReply(voiceText);
+      addCallTurn({
+        role: 'assistant',
+        text: voiceText,
+        languageCode,
+        guidelines: shortSteps,
+        doNots: shortDoNots,
+      });
+      setPhase('speaking');
+      speak(voiceText, languageCode, () => {
+        setPhase('waiting');
+      });
+    },
+    [
+      addCallTurn,
+      isOffline,
+      navigate,
+      setActiveGuidelines,
+      setDetectedLanguage,
+      setDetection,
+      speak,
+      triggerAmbulanceFlow,
+    ]
+  );
+
+  const beginListeningTurn = useCallback(() => {
+    stopSpeaking();
+    setStatusError(null);
+    setPhase('listening');
+    void start(result => {
+      void handleVoiceResult(result);
+    });
+  }, [handleVoiceResult, start, stopSpeaking]);
+
+  // Start first listening turn immediately when the call screen opens
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      beginListeningTurn();
+    }, 0);
+    return () => {
+      window.clearTimeout(id);
+      cancel();
+      stopSpeaking();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const effectivePhase: CallPhase = isTranscribing
+    ? 'thinking'
+    : voiceError && phase === 'listening'
+      ? 'waiting'
+      : phase;
+  const displayError = statusError ?? voiceError;
+
+  const handleEndCall = () => {
+    cancel();
+    stopSpeaking();
+    navigate(detection ? '/emergency' : '/');
+  };
+
+  const langInfo = SARVAM_LANGUAGE_NAMES[activeLangCode] ?? SARVAM_LANGUAGE_NAMES['en-IN'];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-red-950/40 to-gray-950 flex flex-col items-center justify-center px-6 py-10">
-      {/* Cancel button */}
-      <div className="absolute top-6 right-6">
-        <button
-          id="listening-cancel"
-          onClick={handleCancel}
-          aria-label={t('cancel', language)}
-          className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
-        >
-          <X size={22} className="text-gray-300" />
-        </button>
+    <div className="min-h-screen bg-gradient-to-b from-gray-950 via-emerald-950/20 to-gray-950 flex flex-col px-5 py-6">
+      {/* Phone Call Header */}
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-2.5">
+          <span className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" />
+          <div>
+            <p className="text-white font-bold text-sm">RakshaAI Call</p>
+            <p className="text-emerald-300 text-xs font-mono">{formatDuration(callSeconds)}</p>
+          </div>
+        </div>
+
+        <div className="bg-white/10 border border-white/15 rounded-full px-3 py-1 text-xs font-bold text-emerald-300">
+          {langInfo.native} ({activeLangCode})
+        </div>
       </div>
 
-      {/* Animated mic indicator */}
-      <div className="relative flex items-center justify-center mb-10">
-        {/* Pulsing rings */}
+      {/* Live Call Status Ring */}
+      <div className="flex flex-col items-center justify-center my-4">
+        <div className="relative flex items-center justify-center mb-4">
+          {(isListening || isSpeaking) && (
+            <span
+              className={`absolute w-28 h-28 rounded-full opacity-30 animate-ping ${
+                isListening ? 'bg-red-500' : 'bg-emerald-500'
+              }`}
+            />
+          )}
+          <div
+            className={`relative w-24 h-24 rounded-full flex items-center justify-center shadow-2xl ${
+              effectivePhase === 'listening'
+                ? 'bg-red-600'
+                : effectivePhase === 'thinking'
+                  ? 'bg-amber-600'
+                  : effectivePhase === 'speaking'
+                    ? 'bg-emerald-600'
+                    : 'bg-white/15'
+            }`}
+          >
+            {effectivePhase === 'thinking' ? (
+              <Loader2 size={40} className="text-white animate-spin" />
+            ) : effectivePhase === 'speaking' ? (
+              <Volume2 size={40} className="text-white animate-pulse" />
+            ) : (
+              <Mic size={40} className="text-white" />
+            )}
+          </div>
+        </div>
+
+        {/* Minimal status label */}
+        <p className="text-white text-lg font-extrabold text-center">
+          {effectivePhase === 'listening'
+            ? 'Listening... Speak now'
+            : effectivePhase === 'thinking'
+              ? 'Checking WHO guidelines...'
+              : effectivePhase === 'speaking'
+                ? 'Speaking...'
+                : 'Tap mic to ask or answer'}
+        </p>
+
+        {/* Audio bars while listening */}
         {isListening && (
-          <>
-            {[1, 2, 3].map(i => (
-              <span
+          <div className="flex items-end gap-1 h-9 mt-3" aria-hidden="true">
+            {VISUALIZER_BARS.map((height, i) => (
+              <div
                 key={i}
-                className="absolute rounded-full bg-red-500 opacity-20 animate-ping"
+                className="w-1.5 bg-red-400 rounded-full"
                 style={{
-                  width: `${6 + i * 3}rem`,
-                  height: `${6 + i * 3}rem`,
-                  animationDelay: `${i * 0.3}s`,
-                  animationDuration: '1.8s',
+                  height: `${height}%`,
+                  animation: `bounceGentle ${0.65 + (i % 4) * 0.12}s ease-in-out infinite`,
+                  animationDelay: `${i * 0.06}s`,
                 }}
               />
             ))}
-          </>
+          </div>
         )}
-        <div className="relative w-28 h-28 rounded-full bg-gradient-to-br from-red-500 to-red-700 flex items-center justify-center shadow-2xl">
-          <svg viewBox="0 0 24 24" className="w-14 h-14 fill-white" aria-hidden="true">
-            <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm7 8a1 1 0 0 1 .993.883L20 12a8 8 0 0 1-7 7.938V22h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 12a1 1 0 0 1 2 0 6 6 0 0 0 12 0 1 1 0 0 1 1-1z" />
-          </svg>
-        </div>
-      </div>
 
-      {/* Status text */}
-      <div className="text-center mb-8">
-        <p className="text-white text-2xl font-bold mb-2">
-          {error ? '❌ Error' : isListening ? t('listening', language) : t('processing', language)}
-        </p>
-        {error ? (
-          <p className="text-red-400 text-sm px-4">{error}</p>
-        ) : (
-          <p className="text-gray-400 text-sm">{t('tapMicToStart', language)}</p>
+        {interimTranscript && (
+          <p className="text-gray-300 text-sm text-center mt-2 px-4">{interimTranscript}</p>
         )}
-      </div>
 
-      {/* Live transcript display */}
-      {(transcript || interimTranscript) && (
-        <div className="w-full max-w-sm bg-white/10 rounded-2xl p-4 border border-white/15 mb-6">
-          <p className="text-white text-base leading-relaxed">
-            {transcript || interimTranscript}
-          </p>
-        </div>
-      )}
-
-      {/* Audio visualizer bars */}
-      {isListening && (
-        <div className="flex items-end gap-1 h-12 mb-8" aria-hidden="true">
-          {VISUALIZER_BARS.map((bar, i) => (
-            <div
-              key={i}
-              className="w-2 bg-red-500 rounded-full opacity-80"
-              style={{
-                height: `${bar.height}%`,
-                animationName: 'bounceGentle',
-                animationDuration: `${bar.duration}s`,
-                animationTimingFunction: 'ease-in-out',
-                animationIterationCount: 'infinite',
-                animationDelay: `${i * 0.08}s`,
-              }}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Cancel button */}
-      <button
-        id="listening-cancel-btn"
-        onClick={handleCancel}
-        className="mt-4 px-8 py-3 bg-white/10 hover:bg-white/20 text-white rounded-full text-base font-medium transition-colors border border-white/20"
-      >
-        {t('cancel', language)}
-      </button>
-
-      {/* Voice unavailable fallback */}
-      {!isSupported && (
-        <div className="mt-6 p-4 bg-yellow-900/40 border border-yellow-600/40 rounded-2xl text-center">
-          <p className="text-yellow-300 font-semibold mb-1">{t('voiceUnavailable', language)}</p>
-          <p className="text-yellow-400/80 text-sm">{t('voiceFallbackMessage', language)}</p>
+        {isListening && (
           <button
-            onClick={handleCancel}
-            className="mt-3 text-sm text-blue-400 underline"
+            id="stop-speaking-btn"
+            onClick={stop}
+            className="mt-4 flex items-center gap-2 bg-white/15 hover:bg-white/25 text-white font-bold px-5 py-2.5 rounded-full text-sm"
           >
-            Go back to type instead
+            <Square size={14} className="fill-white" />
+            Done Speaking
+          </button>
+        )}
+
+        {displayError && (
+          <p className="text-yellow-300 text-sm text-center mt-3 bg-yellow-950/60 border border-yellow-600/40 rounded-xl px-4 py-2">
+            {displayError}
+          </p>
+        )}
+      </div>
+
+      {/* Guidelines-Only Card (Short WHO bullet points, NO long prose) */}
+      {activeGuidelines && (
+        <div className="bg-white/10 border border-white/15 rounded-3xl p-4 mb-4 space-y-3 overflow-y-auto max-h-72">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              {detection && <span className="text-2xl">{getEmergencyIcon(detection.category)}</span>}
+              <h2 className="text-white font-extrabold text-base">{activeGuidelines.title}</h2>
+            </div>
+            {lastSpokenReply && (
+              <button
+                onClick={() => speak(lastSpokenReply, activeLangCode)}
+                aria-label="Replay voice"
+                className="w-9 h-9 rounded-full bg-emerald-600/80 hover:bg-emerald-600 flex items-center justify-center flex-shrink-0"
+              >
+                <Volume2 size={18} className="text-white" />
+              </button>
+            )}
+          </div>
+
+          <ul className="space-y-2">
+            {activeGuidelines.guidelines.map((step, idx) => (
+              <li key={idx} className="flex items-start gap-2.5 text-white text-sm font-semibold">
+                <CheckCircle2 size={18} className="text-emerald-400 flex-shrink-0 mt-0.5" />
+                <span>{step}</span>
+              </li>
+            ))}
+          </ul>
+
+          {activeGuidelines.doNots.length > 0 && (
+            <ul className="space-y-1.5 pt-2 border-t border-white/10">
+              {activeGuidelines.doNots.map((item, idx) => (
+                <li key={idx} className="flex items-start gap-2 text-red-300 text-xs font-semibold">
+                  <XCircle size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Bottom Phone-Call Action Bar */}
+      <div className="mt-auto space-y-3 pt-2">
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            id="call-ambulance-shortcut"
+            onClick={() => triggerAmbulanceFlow()}
+            className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-black py-3.5 rounded-2xl text-sm shadow-lg"
+          >
+            <Ambulance size={20} />
+            <span>{AMBULANCE_NUMBER}</span>
+          </button>
+
+          <button
+            id="call-hospital-shortcut"
+            onClick={() => {
+              cancel();
+              stopSpeaking();
+              navigate('/hospitals');
+            }}
+            className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-black py-3.5 rounded-2xl text-sm shadow-lg"
+          >
+            <MapPin size={20} />
+            <span>Hospital</span>
           </button>
         </div>
-      )}
+
+        <div className="flex items-center justify-center gap-5 pt-2">
+          {!isListening && effectivePhase !== 'thinking' && (
+            <button
+              id="call-speak-again"
+              onClick={beginListeningTurn}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black px-7 py-4 rounded-full shadow-xl text-base"
+            >
+              <Mic size={22} />
+              <span>Speak</span>
+            </button>
+          )}
+
+          <button
+            id="listening-cancel-btn"
+            onClick={handleEndCall}
+            aria-label="End call"
+            className="flex items-center gap-2 bg-red-700 hover:bg-red-800 text-white font-black px-7 py-4 rounded-full shadow-xl text-base"
+          >
+            <PhoneOff size={22} />
+            <span>End</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

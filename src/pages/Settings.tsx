@@ -1,18 +1,20 @@
-import type { ReactNode } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Volume2, VolumeX, Shield } from 'lucide-react';
+import { ArrowLeft, Volume2, Mic, KeyRound, Check } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
-import { LanguageSelector } from '../components/LanguageSelector';
-import { isAIEnabled } from '../services/aiService';
+import {
+  checkSarvamAvailability,
+  getSarvamApiKey,
+  setSarvamApiKey,
+} from '../services/sarvamService';
+import { SARVAM_LANGUAGE_NAMES } from '../types';
 import { t } from '../data/translations';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="mb-6">
       <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">{title}</h3>
-      <div className="bg-white/8 rounded-2xl border border-white/10 overflow-hidden">
-        {children}
-      </div>
+      <div className="bg-white/8 rounded-2xl border border-white/10 overflow-hidden">{children}</div>
     </div>
   );
 }
@@ -30,13 +32,29 @@ function Row({ label, value, icon }: { label: string; value?: string; icon?: Rea
 }
 
 export default function Settings() {
-  const { language, setLanguage } = useLanguage();
+  const { language, detectedLanguageCode, isAutoDetected } = useLanguage();
   const navigate = useNavigate();
-  const aiEnabled = isAIEnabled();
+
+  const [sarvamKey, setKeyInput] = useState(() => getSarvamApiKey());
+  const [sarvamActive, setSarvamActive] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    void checkSarvamAvailability().then(setSarvamActive);
+  }, []);
+
+  const handleSaveKey = async () => {
+    setSarvamApiKey(sarvamKey);
+    const active = await checkSarvamAvailability();
+    setSarvamActive(active);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const detectedInfo = SARVAM_LANGUAGE_NAMES[detectedLanguageCode] ?? SARVAM_LANGUAGE_NAMES['en-IN'];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 flex flex-col px-5 py-6 pb-24">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-8">
         <button
           id="settings-back"
@@ -49,68 +67,77 @@ export default function Settings() {
         <h2 className="text-xl font-bold text-white">{t('settings', language)}</h2>
       </div>
 
-      {/* Language */}
-      <Section title={t('selectLanguage', language)}>
-        <div className="p-4">
-          <LanguageSelector selected={language} onChange={setLanguage} compact />
+      {/* Automatic Language Detection Status */}
+      <Section title="Automatic Language Detection">
+        <Row
+          label="Detected Language"
+          value={`${detectedInfo.native} (${detectedLanguageCode}) — ${
+            isAutoDetected ? 'Auto-detected from speech/text' : 'Default until you speak'
+          }`}
+        />
+      </Section>
+
+      {/* Sarvam AI Configuration */}
+      <Section title="Sarvam AI (Voice + Auto-Language + Q&A)">
+        <Row
+          icon={
+            <div
+              className="w-3.5 h-3.5 rounded-full"
+              style={{ background: sarvamActive ? '#22c55e' : '#f59e0b' }}
+            />
+          }
+          label="Sarvam AI Status"
+          value={
+            sarvamActive
+              ? 'Active — Saaras v4 (Auto LID) + Sarvam-105B + Bulbul v3'
+              : 'Not configured — enter key below or set SARVAM_API_KEY in .env'
+          }
+        />
+        <div className="p-4 space-y-2.5">
+          <label className="text-xs text-gray-400 flex items-center gap-1.5 font-medium">
+            <KeyRound size={13} />
+            Sarvam API Subscription Key
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="sarvam-api-key-input"
+              type="password"
+              value={sarvamKey}
+              onChange={e => setKeyInput(e.target.value)}
+              placeholder="Paste Sarvam API key..."
+              className="flex-1 bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500"
+            />
+            <button
+              id="save-sarvam-key-btn"
+              onClick={() => {
+                void handleSaveKey();
+              }}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 rounded-xl text-sm flex items-center gap-1.5"
+            >
+              {saved ? <Check size={16} /> : null}
+              <span>{saved ? 'Saved' : 'Save'}</span>
+            </button>
+          </div>
         </div>
       </Section>
 
-      {/* Voice */}
-      <Section title="Voice & Accessibility">
+      {/* Device Capabilities */}
+      <Section title="Device Voice">
         <Row
           icon={<Volume2 size={18} />}
-          label="Text-to-Speech"
-          value={
-            'speechSynthesis' in window
-              ? 'Available on this device'
-              : 'Not supported on this device'
-          }
+          label="Audio Playback / TTS"
+          value={sarvamActive ? 'Sarvam Bulbul v3 (11 Indian languages)' : 'Browser speech synthesis'}
         />
         <Row
-          icon={<svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z"/><path d="M19 11a1 1 0 0 1 .993.883L20 12a8 8 0 0 1-7 7.938V22h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 12a1 1 0 0 1 2 0 6 6 0 0 0 12 0 1 1 0 0 1 1-1z"/></svg>}
-          label="Voice Recognition"
+          icon={<Mic size={18} />}
+          label="Microphone Recording"
           value={
-            'SpeechRecognition' in window || 'webkitSpeechRecognition' in window
-              ? 'Available on this device'
-              : 'Not supported — use text input'
-          }
-        />
-        {language === 'kn' && (
-          <Row
-            icon={<VolumeX size={18} className="text-yellow-400" />}
-            label="Kannada TTS Warning"
-            value="Kannada voice may not be available. Instructions always shown as text."
-          />
-        )}
-      </Section>
-
-      {/* AI */}
-      <Section title="AI Detection">
-        <Row
-          icon={<div className="w-4 h-4 rounded-full" style={{ background: aiEnabled ? '#22c55e' : '#6b7280' }} />}
-          label="AI-Enhanced Detection"
-          value={
-            aiEnabled
-              ? 'Active — Gemini API key configured'
-              : 'Disabled — using rule-based detection (works offline)'
+            typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
+              ? 'Available'
+              : 'Not supported'
           }
         />
       </Section>
-
-      {/* Privacy */}
-      <Section title="Privacy">
-        <Row
-          icon={<Shield size={18} />}
-          label={t('privacyNote', language)}
-        />
-      </Section>
-
-      {/* App version */}
-      <div className="text-center mt-auto">
-        <p className="text-xs text-gray-600">RakshaAI v1.0 — SCALER × Flow Hackathon 2024</p>
-        <p className="text-xs text-gray-700 mt-1">{t('medicalDisclaimer', language)}</p>
-      </div>
     </div>
   );
 }

@@ -1,8 +1,38 @@
 // ============================================================
-// Core Type Definitions — Emergency Assistance App
+// Core Type Definitions — RakshaAI Emergency Assistance App
 // ============================================================
 
 export type Language = 'en' | 'hi' | 'kn';
+
+export type SarvamLanguageCode =
+  | 'en-IN'
+  | 'hi-IN'
+  | 'kn-IN'
+  | 'ta-IN'
+  | 'te-IN'
+  | 'bn-IN'
+  | 'mr-IN'
+  | 'gu-IN'
+  | 'ml-IN'
+  | 'pa-IN'
+  | 'od-IN';
+
+export const AMBULANCE_NUMBER = '108';
+export const NATIONAL_EMERGENCY_NUMBER = '112';
+
+export const SARVAM_LANGUAGE_NAMES: Record<SarvamLanguageCode, { name: string; native: string }> = {
+  'en-IN': { name: 'English', native: 'English' },
+  'hi-IN': { name: 'Hindi', native: 'हिंदी' },
+  'kn-IN': { name: 'Kannada', native: 'ಕನ್ನಡ' },
+  'ta-IN': { name: 'Tamil', native: 'தமிழ்' },
+  'te-IN': { name: 'Telugu', native: 'తెలుగు' },
+  'bn-IN': { name: 'Bengali', native: 'বাংলা' },
+  'mr-IN': { name: 'Marathi', native: 'मराठी' },
+  'gu-IN': { name: 'Gujarati', native: 'ગુજરાતી' },
+  'ml-IN': { name: 'Malayalam', native: 'മലയാളം' },
+  'pa-IN': { name: 'Punjabi', native: 'ਪੰਜਾਬੀ' },
+  'od-IN': { name: 'Odia', native: 'ଓଡ଼ିଆ' },
+};
 
 export const EmergencyCategory = {
   SNAKEBITE: 'snakebite',
@@ -67,7 +97,32 @@ export interface EmergencyDetectionResult {
   category: EmergencyCategory;
   confidence: number; // 0–1
   rawText: string;
-  source: 'rule-based' | 'ai-enhanced';
+  source: 'rule-based' | 'ai-enhanced' | 'sarvam-ai';
+  detectedLanguageCode?: SarvamLanguageCode;
+  arrangeAmbulance?: boolean;
+  findHospital?: boolean;
+  aiGuidance?: SarvamGuidanceResponse;
+}
+
+export interface SarvamGuidanceResponse {
+  intent: 'first_aid' | 'arrange_ambulance' | 'find_hospital' | 'clarify';
+  category: EmergencyCategory;
+  title: string;
+  guidelines: string[];
+  doNots: string[];
+  voiceReply: string;
+  followUpQuestion?: string;
+  arrangeAmbulance: boolean;
+  findHospital: boolean;
+  languageCode: SarvamLanguageCode;
+}
+
+export interface CallTurn {
+  role: 'user' | 'assistant';
+  text: string;
+  languageCode: SarvamLanguageCode;
+  guidelines?: string[];
+  doNots?: string[];
 }
 
 export interface LocationData {
