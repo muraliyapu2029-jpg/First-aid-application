@@ -16,6 +16,7 @@ interface SpeechRecognitionInstance extends EventTarget {
   onend: ((this: SpeechRecognitionInstance, ev: Event) => unknown) | null;
   start(): void;
   stop(): void;
+  abort(): void;
 }
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
@@ -48,8 +49,17 @@ class SpeechRecognitionService {
       return false;
     }
 
-    if (this.isListening) {
-      this.stop();
+    // Tear down any previous session without letting its late
+    // onend/onerror ('aborted') events leak into the new one.
+    if (this.recognition) {
+      const previous = this.recognition;
+      previous.onstart = null;
+      previous.onresult = null;
+      previous.onerror = null;
+      previous.onend = null;
+      try { previous.abort(); } catch { /* already stopped */ }
+      this.recognition = null;
+      this.isListening = false;
     }
 
     const SpeechRecognitionAPI =
@@ -109,6 +119,9 @@ class SpeechRecognitionService {
           break;
         case 'audio-capture':
           onError('No microphone found. Please connect a microphone.');
+          break;
+        case 'aborted':
+          // Deliberate stop/restart — not an error worth showing
           break;
         default:
           onError(`Speech recognition error: ${event.error}`);

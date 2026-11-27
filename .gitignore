@@ -29,3 +29,7 @@ npm-debug.log*
 
 # TypeScript
 *.tsbuildinfo
+
+# Sarvam TTS cache (server-side) and local test clips
+server/.cache/
+server/*.mp3

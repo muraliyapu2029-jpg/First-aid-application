@@ -14,7 +14,7 @@ export default function Emergency() {
   const { language } = useLanguage();
   const { detection, reset } = useEmergency();
   const navigate = useNavigate();
-  const { speak, stop, isSpeaking, canSpeak, hasVoiceForCurrentLang, capability } = useTTS(language);
+  const { speak, stop, prefetch, isSpeaking, canSpeak, hasVoiceForCurrentLang, capability } = useTTS(language);
   const protocol = useMemo(
     () => (detection ? getFirstAidProtocol(detection.category, language) : null),
     [detection, language]
@@ -36,6 +36,12 @@ export default function Emergency() {
       }
     }
   }, [protocol, language, canSpeak, hasVoiceForCurrentLang, speak]);
+
+  // Preload step 1's voice for the First Aid page
+  useEffect(() => {
+    const first = protocol?.steps[0];
+    if (first && canSpeak && hasVoiceForCurrentLang) prefetch(first.instruction);
+  }, [protocol, canSpeak, hasVoiceForCurrentLang, prefetch]);
 
   useEffect(() => () => stop(), [stop]);
 

@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Volume2, VolumeX, Shield } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { LanguageSelector } from '../components/LanguageSelector';
 import { isAIEnabled } from '../services/aiService';
+import { isCloudSTTAvailable } from '../services/cloudSTT';
 import { t } from '../data/translations';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -33,6 +34,13 @@ export default function Settings() {
   const { language, setLanguage } = useLanguage();
   const navigate = useNavigate();
   const aiEnabled = isAIEnabled();
+  const [cloudVoice, setCloudVoice] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    isCloudSTTAvailable().then(available => { if (active) setCloudVoice(available); });
+    return () => { active = false; };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 flex flex-col px-5 py-6 pb-24">
@@ -76,7 +84,18 @@ export default function Settings() {
               : 'Not supported — use text input'
           }
         />
-        {language === 'kn' && (
+        <Row
+          icon={<div className="w-4 h-4 rounded-full" style={{ background: cloudVoice ? '#22c55e' : '#6b7280' }} />}
+          label="Cloud Voice (Sarvam AI)"
+          value={
+            cloudVoice === null
+              ? 'Checking…'
+              : cloudVoice
+                ? 'On — auto-detects Kannada, Hindi & English speech'
+                : 'Off — using on-device recognition in the selected language'
+          }
+        />
+        {language === 'kn' && !cloudVoice && (
           <Row
             icon={<VolumeX size={18} className="text-yellow-400" />}
             label="Kannada TTS Warning"

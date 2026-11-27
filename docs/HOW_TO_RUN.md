@@ -15,7 +15,7 @@ This guide explains how to install dependencies, configure optional environment 
 
 1. **Open a terminal in the project folder**:
    ```powershell
-   cd c:\Users\Murali\OneDrive\Desktop\hackthon_scaler
+   cd "C:\Scalar Voice First\First-aid-application"
    ```
 
 2. **Install dependencies** (if not already installed):
@@ -41,12 +41,50 @@ This guide explains how to install dependencies, configure optional environment 
 
 ---
 
+## 2b. Cloud Voice with Sarvam AI *(optional, recommended)*
+
+With a Sarvam key, the app records the user's voice and sends it to the backend, and Sarvam
+**auto-detects whether they spoke Kannada, Hindi or English**. The whole app then replies in
+that language. Without a key, the app uses the browser's own recognizer in the selected language,
+and the Listening screen has one-tap language buttons.
+
+1. Get a key at https://dashboard.sarvam.ai (new accounts get free starter credits).
+2. Add it to `.env` in the project root. Only the backend reads it; it is never sent to the browser.
+   ```
+   SARVAM_API_KEY=your_key_here
+   ```
+3. Start the backend in a **second terminal**:
+   ```powershell
+   cd "C:\Scalar Voice First\First-aid-application\server"
+   npm install
+   npm run dev
+   ```
+   It should print `Cloud STT: Enabled (Sarvam)`. The Vite dev server forwards `/api` requests to it.
+4. Open **Settings**. **Cloud Voice (Sarvam AI)** should show "On".
+
+### Kannada voice replies
+
+Most devices have no Kannada text-to-speech voice, so Kannada instructions are spoken with Sarvam audio:
+
+- **Pre-generated clips** in `public/audio/kn/` ship with the app. They work offline and play instantly.
+- **Anything not pre-generated** is synthesized live through the backend (`POST /api/voice/speak`) and cached in `server/.cache/tts/`, so each sentence is paid for only once.
+
+After editing any Kannada first-aid text in `src/data/firstAidTranslations.ts`, regenerate the clips. Only changed sentences are re-synthesized:
+
+```powershell
+npm run tts:generate -- --dry-run   # shows how many clips and the estimated cost
+npm run tts:generate
+```
+
+---
+
 ## 3. Production Build & Preview (Local)
 
-To verify TypeScript types, bundle the app, and preview the production build locally:
+To verify TypeScript types, run tests, bundle the app, and preview the production build locally:
 
 ```powershell
 npm run lint
+npm test
 npm run build
 npm run preview
 ```

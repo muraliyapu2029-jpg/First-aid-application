@@ -20,12 +20,12 @@ export function useTTS(language: Language) {
     isSpeaking: false,
     capability: cached,
     isLoading: !cached,
-    showKannadaWarning: cached ? language === 'kn' && !cached.hasKannada : false,
+    showKannadaWarning: cached ? language === 'kn' && !speechSynthesisService.hasVoiceForLanguage('kn') : false,
   });
 
   useEffect(() => {
     speechSynthesisService.detectCapability().then((cap) => {
-      const showKannadaWarning = language === 'kn' && !cap.hasKannada;
+      const showKannadaWarning = language === 'kn' && !speechSynthesisService.hasVoiceForLanguage('kn');
       setState(prev => ({
         ...prev,
         capability: cap,
@@ -50,6 +50,12 @@ export function useTTS(language: Language) {
     [language]
   );
 
+  // Load audio for a sentence that will probably be spoken next
+  const prefetch = useCallback(
+    (text: string) => speechSynthesisService.prefetch(text, language),
+    [language]
+  );
+
   const stop = useCallback(() => {
     speechSynthesisService.stop();
     setState(prev => ({ ...prev, isSpeaking: false }));
@@ -58,5 +64,5 @@ export function useTTS(language: Language) {
   const canSpeak = state.capability?.supported ?? false;
   const hasVoiceForCurrentLang = speechSynthesisService.hasVoiceForLanguage(language);
 
-  return { ...state, speak, stop, canSpeak, hasVoiceForCurrentLang };
+  return { ...state, speak, stop, prefetch, canSpeak, hasVoiceForCurrentLang };
 }

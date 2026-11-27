@@ -49,7 +49,9 @@ router.post('/detect', async (req: Request, res: Response) => {
       throw new Error(`Gemini API error: ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
     const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
     const jsonMatch = rawText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('Could not parse AI response');

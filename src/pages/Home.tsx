@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Phone, MapPin, Settings, Send } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useEmergency } from '../context/EmergencyContext';
-import { useVoiceInput } from '../hooks/useVoiceInput';
+import { isAudioRecordingSupported } from '../hooks/useAudioRecorder';
 import { useOfflineStatus } from '../hooks/useOfflineStatus';
 import { detectEmergency } from '../services/emergencyDetection';
+import { detectLanguage } from '../services/languageDetection';
+import { speechRecognitionService } from '../services/speechRecognition';
 import { isAIEnabled } from '../services/aiService';
 import { MicrophoneButton } from '../components/MicrophoneButton';
 import { LanguageSelector } from '../components/LanguageSelector';
@@ -36,34 +38,30 @@ export default function Home() {
   const navigate = useNavigate();
 
   const [textInput, setTextInput] = useState('');
-  const [micState, setMicState] = useState<'idle' | 'listening' | 'processing'>('idle');
+  const [micState, setMicState] = useState<'idle' | 'processing'>('idle');
 
-  const { isSupported, start, stop } = useVoiceInput(language);
+  // Voice works if either the browser recognizer or audio recording
+  // (for cloud STT via Sarvam) is available on this device.
+  const isSupported = speechRecognitionService.isSupported() || isAudioRecordingSupported();
 
-  // Start/stop mic and navigate to listening page
+  // The Listening page owns the whole voice session (cloud or browser),
+  // so the mic button only navigates — starting here too caused a double start.
   const handleMicClick = useCallback(() => {
-    if (micState === 'listening') {
-      stop();
-      setMicState('idle');
-    } else {
-      setMicState('listening');
-      start(async () => {
-        // Recognition ended
-        setMicState('idle');
-      });
-      navigate('/listening');
-    }
-  }, [micState, start, stop, navigate]);
+    navigate('/listening');
+  }, [navigate]);
 
   const handleTextSubmit = useCallback(async () => {
     const text = textInput.trim();
     if (!text) return;
     setMicState('processing');
+    // Reply in the language the user typed in (Kannada / Hindi / English)
+    const typedLanguage = detectLanguage(text, language);
+    if (typedLanguage !== language) setLanguage(typedLanguage);
     const result = await detectEmergency(text, isAIEnabled() && !isOffline);
     setDetection(result);
     setMicState('idle');
     navigate('/emergency');
-  }, [textInput, isOffline, setDetection, navigate]);
+  }, [textInput, language, setLanguage, isOffline, setDetection, navigate]);
 
   const handleQuickSelect = useCallback(
     (category: EmergencyCategory) => {

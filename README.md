@@ -46,6 +46,8 @@ npm run dev
 | **Hindi** (हिंदी) | ✅ | ✅ | ✅ |
 | **English** | ✅ | ✅ | ✅ |
 
+> **🗣️ Replies in the user's language:** The app detects whether the user spoke or typed Kannada, Hindi or English, then switches the whole app to it: UI text, first-aid steps and voice. Speech goes through the backend to Sarvam AI, which detects the language automatically (`POST /api/voice/transcribe`). Typed text and offline speech use script detection (`src/services/languageDetection.ts`). Set `SARVAM_API_KEY` in `.env` and run `server/`. See [docs/HOW_TO_RUN.md](docs/HOW_TO_RUN.md).
+
 > **⚠️ Kannada TTS Note:** Browser support for Kannada text-to-speech (`kn-IN`) varies significantly by device and operating system. When Kannada voice is unavailable, the app displays a **clear warning** and shows all instructions as readable Kannada text. It **never silently switches to English.**
 
 ---
@@ -110,6 +112,7 @@ locationService.ts → navigator.geolocation
 |----------|----------|-------------|
 | `VITE_GEMINI_API_KEY` | ❌ Optional | Gemini API key for AI-enhanced detection |
 | `VITE_OVERPASS_API_URL` | ❌ Optional | Custom Overpass API endpoint |
+| `SARVAM_API_KEY` | ❌ Optional (server only) | Sarvam AI speech-to-text with automatic Kannada / Hindi / English detection. Read by `server/` and never exposed to the browser |
 
 ---
 

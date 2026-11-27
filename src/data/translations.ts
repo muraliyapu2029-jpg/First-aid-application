@@ -89,7 +89,11 @@ export type TranslationKey =
   | 'emergency_breathing_difficulty'
   | 'emergency_seizure'
   | 'emergency_fainting'
-  | 'emergency_unknown';
+  | 'emergency_unknown'
+  | 'otherLanguagePrompt'
+  | 'tryAgain'
+  | 'noSpeechHeard'
+  | 'tapMicWhenDone';
 
 type Translations = Record<Language, Record<TranslationKey, string>>;
 
@@ -179,6 +183,10 @@ export const translations: Translations = {
     emergency_seizure: 'Seizure / Fits',
     emergency_fainting: 'Fainting',
     emergency_unknown: 'Unknown Emergency',
+    otherLanguagePrompt: "Speaking another language? Tap it:",
+    tryAgain: "Try again",
+    noSpeechHeard: "We couldn't hear you. Please speak again.",
+    tapMicWhenDone: "Tap the mic when you finish speaking",
   },
 
   hi: {
@@ -266,6 +274,10 @@ export const translations: Translations = {
     emergency_seizure: 'दौरा / मिर्गी',
     emergency_fainting: 'बेहोशी / चक्कर आना',
     emergency_unknown: 'अज्ञात आपात स्थिति',
+    otherLanguagePrompt: "दूसरी भाषा में बोल रहे हैं? उसे चुनें:",
+    tryAgain: "फिर से कोशिश करें",
+    noSpeechHeard: "आपकी आवाज़ सुनाई नहीं दी। कृपया फिर से बोलें।",
+    tapMicWhenDone: "बोलना खत्म होने पर माइक दबाएँ",
   },
 
   kn: {
@@ -353,6 +365,10 @@ export const translations: Translations = {
     emergency_seizure: 'ಅಪಸ್ಮಾರ / ಫಿಟ್ಸ್',
     emergency_fainting: 'ಮೂರ್ಛೆ / ತಲೆ ಸುತ್ತುವಿಕೆ',
     emergency_unknown: 'ಅಜ್ಞಾತ ತುರ್ತು ಪರಿಸ್ಥಿತಿ',
+    otherLanguagePrompt: "ಬೇರೆ ಭಾಷೆಯಲ್ಲಿ ಮಾತನಾಡುತ್ತಿದ್ದೀರಾ? ಅದನ್ನು ಆಯ್ಕೆಮಾಡಿ:",
+    tryAgain: "ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ",
+    noSpeechHeard: "ನಿಮ್ಮ ಧ್ವನಿ ಕೇಳಿಸಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಮಾತನಾಡಿ.",
+    tapMicWhenDone: "ಮಾತು ಮುಗಿದ ನಂತರ ಮೈಕ್ ಒತ್ತಿರಿ",
   },
 };
 

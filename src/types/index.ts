@@ -82,6 +82,8 @@ export interface TTSCapability {
   hasHindi: boolean;
   hasEnglish: boolean;
   availableVoices: string[];
+  /** Languages spoken with Sarvam audio (pre-generated or live) */
+  audioVoiceLanguages: Language[];
 }
 
 export interface AppState {
