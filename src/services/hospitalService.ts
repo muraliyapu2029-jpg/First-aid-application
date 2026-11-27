@@ -5,7 +5,9 @@ import type { Hospital, Language, LocationData } from '../types';
 // Uses Overpass API (OpenStreetMap) for nearby hospital discovery
 // ============================================================
 
-const PRIMARY_OVERPASS_URL = import.meta.env.VITE_OVERPASS_API_URL || 'https://overpass-api.de/api/interpreter';
+const PRIMARY_OVERPASS_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OVERPASS_API_URL) ||
+  'https://overpass-api.de/api/interpreter';
 const OVERPASS_ENDPOINTS = Array.from(
   new Set([
     PRIMARY_OVERPASS_URL,
@@ -15,8 +17,43 @@ const OVERPASS_ENDPOINTS = Array.from(
 const NEARBY_RADIUS_KM = 3;
 const EXPANDED_RADIUS_KM = 10;
 const MAX_RESULTS = 15;
+const HOSPITAL_CACHE_KEY = 'raksha_cached_hospitals';
 
-function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+export interface CachedHospitals {
+  hospitals: Hospital[];
+  lat: number;
+  lon: number;
+  updatedAt: string;
+}
+
+export function cacheHospitals(hospitals: Hospital[], location: LocationData): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const payload: CachedHospitals = {
+      hospitals,
+      lat: location.lat,
+      lon: location.lon,
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(HOSPITAL_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function getCachedHospitals(): CachedHospitals | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(HOSPITAL_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedHospitals;
+    return Array.isArray(parsed?.hospitals) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371; // Earth radius km
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
@@ -37,6 +74,7 @@ function buildOverpassQuery(lat: number, lon: number, radiusMeters: number): str
       way["amenity"="hospital"](around:${radiusMeters},${lat},${lon});
       node["amenity"="clinic"](around:${radiusMeters},${lat},${lon});
       node["healthcare"="hospital"](around:${radiusMeters},${lat},${lon});
+      way["healthcare"="hospital"](around:${radiusMeters},${lat},${lon});
     );
     out center;
   `;
@@ -66,7 +104,7 @@ interface OverpassElement {
   };
 }
 
-function parseOverpassResult(
+export function parseOverpassResult(
   elements: OverpassElement[],
   userLat: number,
   userLon: number,
@@ -155,10 +193,11 @@ export async function findNearbyHospitals(
 ): Promise<Hospital[]> {
   // Search very nearby (3 km) first; expand to 10 km if fewer than 3 facilities found
   const nearby = await queryOverpass(location, NEARBY_RADIUS_KM, language);
-  if (nearby.length >= 3) {
-    return nearby;
-  }
-  return queryOverpass(location, EXPANDED_RADIUS_KM, language);
+  const results = nearby.length >= 3
+    ? nearby
+    : await queryOverpass(location, EXPANDED_RADIUS_KM, language);
+  cacheHospitals(results, location);
+  return results;
 }
 
 export function getGoogleMapsLink(hospital: Hospital): string {

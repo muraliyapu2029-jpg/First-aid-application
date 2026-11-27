@@ -6,7 +6,8 @@ import { EmergencyCategory, type EmergencyDetectionResult } from '../types';
 // AI classifies the emergency type only — never generates protocols.
 // ============================================================
 
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+const API_KEY = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_GEMINI_API_KEY : undefined;
+const API_BASE_URL = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_API_BASE_URL : undefined;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
 
 const VALID_CATEGORIES = Object.values(EmergencyCategory).filter(
@@ -34,7 +35,50 @@ Rules:
 - Respond ONLY with the JSON object`;
 }
 
+function isValidResult(category: unknown, confidence: unknown): category is EmergencyCategory {
+  const num = Number(confidence);
+  return (
+    typeof category === 'string' &&
+    Object.values(EmergencyCategory).includes(category as EmergencyCategory) &&
+    !isNaN(num) &&
+    num >= 0 &&
+    num <= 1
+  );
+}
+
+async function detectViaBackendProxy(text: string): Promise<EmergencyDetectionResult | null> {
+  if (!API_BASE_URL) return null;
+
+  try {
+    const base = API_BASE_URL.replace(/\/+$/, '');
+    const response = await fetch(`${base}/api/emergency/detect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    if (!isValidResult(data?.category, data?.confidence)) return null;
+
+    return {
+      category: data.category,
+      confidence: Number(data.confidence),
+      rawText: text,
+      source: 'ai-enhanced',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function detectWithAI(text: string): Promise<EmergencyDetectionResult | null> {
+  // Prefer backend proxy so the Gemini API key is never exposed in the browser
+  const proxyResult = await detectViaBackendProxy(text);
+  if (proxyResult) return proxyResult;
+
   if (!API_KEY || API_KEY === 'optional_your_key_here') {
     return null;
   }
@@ -63,15 +107,11 @@ export async function detectWithAI(text: string): Promise<EmergencyDetectionResu
     if (!jsonMatch) return null;
 
     const parsed = JSON.parse(jsonMatch[0]);
-    const category = parsed.category as EmergencyCategory;
-    const confidence = Number(parsed.confidence);
-
-    if (!Object.values(EmergencyCategory).includes(category)) return null;
-    if (isNaN(confidence) || confidence < 0 || confidence > 1) return null;
+    if (!isValidResult(parsed.category, parsed.confidence)) return null;
 
     return {
-      category,
-      confidence,
+      category: parsed.category,
+      confidence: Number(parsed.confidence),
       rawText: text,
       source: 'ai-enhanced',
     };
@@ -81,5 +121,5 @@ export async function detectWithAI(text: string): Promise<EmergencyDetectionResu
 }
 
 export function isAIEnabled(): boolean {
-  return Boolean(API_KEY && API_KEY !== 'optional_your_key_here');
+  return Boolean(API_BASE_URL || (API_KEY && API_KEY !== 'optional_your_key_here'));
 }

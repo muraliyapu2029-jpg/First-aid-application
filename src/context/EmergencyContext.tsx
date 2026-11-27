@@ -31,15 +31,57 @@ const EmergencyContext = createContext<EmergencyContextValue>({
   selectCategory: () => {},
 });
 
+const STORAGE_KEY = 'raksha_emergency_state';
+
+interface PersistedEmergencyState {
+  detection: EmergencyDetectionResult;
+  currentStepIndex: number;
+}
+
+function loadPersistedState(): {
+  detection: EmergencyDetectionResult | null;
+  protocol: FirstAidProtocol | null;
+  currentStepIndex: number;
+} {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return { detection: null, protocol: null, currentStepIndex: 0 };
+    const parsed = JSON.parse(raw) as PersistedEmergencyState;
+    if (!parsed?.detection?.category) {
+      return { detection: null, protocol: null, currentStepIndex: 0 };
+    }
+    const protocol = getFirstAidProtocol(parsed.detection.category);
+    const maxStep = Math.max(0, protocol.steps.length - 1);
+    const step = Math.min(Math.max(0, Number(parsed.currentStepIndex) || 0), maxStep);
+    return { detection: parsed.detection, protocol, currentStepIndex: step };
+  } catch {
+    return { detection: null, protocol: null, currentStepIndex: 0 };
+  }
+}
+
+function savePersistedState(detection: EmergencyDetectionResult | null, currentStepIndex: number): void {
+  try {
+    if (!detection) {
+      sessionStorage.removeItem(STORAGE_KEY);
+      return;
+    }
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ detection, currentStepIndex }));
+  } catch {
+    // Ignore storage errors (e.g., private browsing quota)
+  }
+}
+
 export function EmergencyProvider({ children }: { children: ReactNode }) {
-  const [detection, setDetectionState] = useState<EmergencyDetectionResult | null>(null);
-  const [protocol, setProtocol] = useState<FirstAidProtocol | null>(null);
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const initial = loadPersistedState();
+  const [detection, setDetectionState] = useState<EmergencyDetectionResult | null>(initial.detection);
+  const [protocol, setProtocol] = useState<FirstAidProtocol | null>(initial.protocol);
+  const [currentStepIndex, setCurrentStepIndex] = useState(initial.currentStepIndex);
 
   const setDetection = (result: EmergencyDetectionResult) => {
     setDetectionState(result);
     setProtocol(getFirstAidProtocol(result.category));
     setCurrentStepIndex(0);
+    savePersistedState(result, 0);
   };
 
   const selectCategory = (category: EmergencyCategory, rawText = '') => {
@@ -54,18 +96,23 @@ export function EmergencyProvider({ children }: { children: ReactNode }) {
   const setStepIndex = (index: number) => {
     if (protocol && index >= 0 && index < protocol.steps.length) {
       setCurrentStepIndex(index);
+      savePersistedState(detection, index);
     }
   };
 
   const nextStep = () => {
     if (protocol && currentStepIndex < protocol.steps.length - 1) {
-      setCurrentStepIndex(i => i + 1);
+      const next = currentStepIndex + 1;
+      setCurrentStepIndex(next);
+      savePersistedState(detection, next);
     }
   };
 
   const prevStep = () => {
     if (currentStepIndex > 0) {
-      setCurrentStepIndex(i => i - 1);
+      const prev = currentStepIndex - 1;
+      setCurrentStepIndex(prev);
+      savePersistedState(detection, prev);
     }
   };
 
@@ -73,6 +120,7 @@ export function EmergencyProvider({ children }: { children: ReactNode }) {
     setDetectionState(null);
     setProtocol(null);
     setCurrentStepIndex(0);
+    savePersistedState(null, 0);
   };
 
   return (
